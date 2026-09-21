@@ -1,7 +1,7 @@
 # Laksh Sarda
 
 I build small tools for things I got tired of doing by hand: copying tables out of PDFs,
-checking five dining hall menus every morning, grading the same exam question 200 times.
+checking five dining hall menus every morning, grading the same exam question multiple times.
 
 ### [Othello from self-play](https://github.com/lakshsarda137/rl-for-games/tree/main/othello)
 
