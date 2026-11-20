@@ -15,6 +15,9 @@ Google Docs, Word or Excel.
 
 ## Now
 
+Undergraduate researcher at Rice's Cho Lab, building real-time feedback for dental students from
+live video and preliminary X-rays.
+
 Software developer at RiceApps, a Rice club that builds software for nonprofits and students.
 
 ## Away from a keyboard
