@@ -1,8 +1,11 @@
 """Draw a snake that eats the GitHub contribution graph, without leaving it.
 
-The snake sweeps the graph column by column (down one week, up the next), so it
-never needs to step outside the grid. Each square empties when the head reaches
-it. The snake gets fatter as it eats and slimmer as it crosses empty squares; each
+The snake hunts: it heads for the nearest uneaten square (on a tie, squares about
+to be cut off first, so it doesn't strand stragglers, then darker squares), now and
+then gets distracted by a juicier square a few steps away, and
+avoids running through its own body. It only ever moves between neighbouring days,
+so it never leaves the grid. The route is seeded by the date, so it changes daily.
+Each square empties when the head reaches it. The snake gets fatter as it eats and slimmer as it crosses empty squares; each
 body segment keeps the weight the head had at that spot, so meals travel down the body. At the end of the loop the snake fades out while the squares refill, then it
 fades back in at the start.
 
@@ -11,9 +14,12 @@ Writes snake.svg (light) and snake-dark.svg (dark). Standard library only.
     GITHUB_TOKEN=... python3 snake.py --user <login> --out dist
 """
 import argparse
+import datetime
 import json
 import os
+import random
 import urllib.request
+from collections import deque
 
 PITCH = 16            # px between squares, as on github.com
 CELL = 12             # square size
@@ -29,6 +35,11 @@ START_WEIGHT = 0.3
 GAIN_PER_LEVEL = 0.035
 LOSS_PER_EMPTY = 0.12
 THIN, RANGE = 0.6, 0.65
+
+# Hunting: chance per target of chasing a juicier square within DISTRACT_RADIUS
+# instead of the nearest one.
+DISTRACT_CHANCE = 0.2
+DISTRACT_RADIUS = 3
 
 LEVELS = {"NONE": 0, "FIRST_QUARTILE": 1, "SECOND_QUARTILE": 2, "THIRD_QUARTILE": 3, "FOURTH_QUARTILE": 4}
 
@@ -64,24 +75,61 @@ def fetch_grid(login, token):
             for w, week in enumerate(weeks) for d in week["contributionDays"]}
 
 
-def sweep(grid):
-    """Column-by-column path that stays on the board.
+def neighbours(pos, cells, rng):
+    w, d = pos
+    out = [n for n in ((w + 1, d), (w - 1, d), (w, d + 1), (w, d - 1)) if n in cells]
+    rng.shuffle(out)
+    return out
 
-    The last week goes top-down so the path ends on today's square. Blank spots
-    in the partial first/last week are skipped at the ends of the path; in the
-    middle of the first column they are crossed (still inside the board)."""
-    weeks = max(w for w, _ in grid) + 1
-    path = []
-    for w in range(weeks):
-        down = (weeks - 1 - w) % 2 == 0
-        rows = range(7) if down else range(6, -1, -1)
-        path.extend((w, d) for d in rows)
-    # Trim blank spots before the first real day and after the last one.
-    while path[0] not in grid:
-        path.pop(0)
-    while path[-1] not in grid:
-        path.pop()
-    return weeks, path
+
+def bfs(start, cells, blocked, rng):
+    """Shortest-path tree from start over real days, avoiding blocked squares."""
+    prev, dist, queue = {start: None}, {start: 0}, deque([start])
+    while queue:
+        cur = queue.popleft()
+        for n in neighbours(cur, cells, rng):
+            if n not in prev and n not in blocked:
+                prev[n], dist[n] = cur, dist[cur] + 1
+                queue.append(n)
+    return prev, dist
+
+
+def hunt(grid, seed):
+    """Route that eats every green square, moving only between neighbouring days."""
+    rng = random.Random(seed)
+    cells = set(grid)
+    food = {pos for pos, level in grid.items() if level}
+    path = [min(cells)]                      # start on the oldest day
+    food.discard(path[0])
+    while food:
+        head = path[-1]
+        body = set(path[-len(SEGMENTS):-1])  # don't slither through yourself
+        prev, dist = bfs(head, cells, body, rng)
+        reachable = [f for f in food if f in dist]
+        if not reachable:                    # boxed in by own body: allow crossing it
+            prev, dist = bfs(head, cells, set(), rng)
+            reachable = [f for f in food if f in dist]
+        nearest = min(dist[f] for f in reachable)
+        if rng.random() < DISTRACT_CHANCE:
+            pool = [f for f in reachable if dist[f] <= nearest + DISTRACT_RADIUS]
+        else:
+            pool = [f for f in reachable if dist[f] == nearest]
+
+        # Prefer squares with few uneaten neighbours (about to be stranded), then darker ones.
+        def appeal(f, food=food):
+            w, d = f
+            return (-sum(n in food for n in ((w + 1, d), (w - 1, d), (w, d + 1), (w, d - 1))), grid[f])
+
+        best = max(appeal(f) for f in pool)
+        target = rng.choice([f for f in pool if appeal(f) == best])
+        steps = []
+        while target != head:
+            steps.append(target)
+            target = prev[target]
+        for pos in reversed(steps):
+            path.append(pos)
+            food.discard(pos)
+    return path
 
 
 def weights(grid, path):
@@ -168,14 +216,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--user", required=True)
     ap.add_argument("--out", default="dist")
+    ap.add_argument("--seed", help="route seed (default: today's date, so the route changes daily)")
     args = ap.parse_args()
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
         raise SystemExit("GITHUB_TOKEN is not set")
 
     grid = fetch_grid(args.user, token)
-    weeks, path = sweep(grid)
-    assert all(0 <= w < weeks and 0 <= d < 7 for w, d in path), "path left the board"
+    weeks = max(w for w, _ in grid) + 1
+    path = hunt(grid, seed=args.seed or datetime.date.today().isoformat())
+    assert all(pos in grid for pos in path), "path left the board"
+    assert all(abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1 for a, b in zip(path, path[1:])), "path jumped"
     assert all(pos in set(path) for pos, lvl in grid.items() if lvl), "a square was never visited"
 
     os.makedirs(args.out, exist_ok=True)

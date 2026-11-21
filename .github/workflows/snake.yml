@@ -20,7 +20,7 @@ jobs:
       - name: Check out profile repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      # Custom generator: the snake sweeps the graph column by column and never leaves it.
+      # Custom generator: the snake hunts for squares (new route daily) and never leaves the grid.
       - name: Generate light and dark snake
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
