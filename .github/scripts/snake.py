@@ -25,8 +25,11 @@ LEVELS = {"NONE": 0, "FIRST_QUARTILE": 1, "SECOND_QUARTILE": 2, "THIRD_QUARTILE"
 THEMES = {
     "snake.svg": {"empty": "#ebedf0", "levels": ["#9be9a8", "#40c463", "#30a14e", "#216e39"],
                   "snake": "#1f6feb", "border": "#1b1f230f"},
-    "snake-dark.svg": {"empty": "#2d333b", "levels": ["#0e5a2a", "#1f883d", "#3fb950", "#7ee787"],
-                       "snake": "#58a6ff", "border": "#ffffff0d"},
+    # Transparent, so it sits on whichever dark theme the viewer uses. Every colour is
+    # checked against GitHub dark (#0d1117), dark dimmed (#22272e) and dark high contrast
+    # (#0a0c10): empty squares >= 1.7:1 on all three, each green step >= 1.5:1 from the last.
+    "snake-dark.svg": {"empty": "#454c56", "levels": ["#1a7f37", "#30a14e", "#56d364", "#aff5b4"],
+                       "snake": "#79c0ff", "border": "#ffffff0d"},
 }
 
 QUERY = """query($login: String!) {
