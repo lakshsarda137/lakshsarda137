@@ -2,7 +2,8 @@
 
 The snake sweeps the graph column by column (down one week, up the next), so it
 never needs to step outside the grid. Each square empties when the head reaches
-it. At the end of the loop the snake fades out while the squares refill, then it
+it. The snake gets fatter as it eats and slimmer as it crosses empty squares; each
+body segment keeps the weight the head had at that spot, so meals travel down the body. At the end of the loop the snake fades out while the squares refill, then it
 fades back in at the start.
 
 Writes snake.svg (light) and snake-dark.svg (dark). Standard library only.
@@ -18,7 +19,16 @@ PITCH = 16            # px between squares, as on github.com
 CELL = 12             # square size
 STEP_MS = 150         # time per move
 FADE_MS = 2400        # end-of-loop fade (snake out, squares refill)
-SEGMENTS = [14, 13, 12, 11, 10]   # head first; sizes in px
+SEGMENTS = [1.0, 0.93, 0.86, 0.79, 0.71]   # head-to-tail taper
+BASE = 14             # head size at normal weight, px
+
+# Weight: eating a green square fattens the snake (darker squares more); crossing an
+# empty square slims it. Size = taper * BASE * (THIN + RANGE * weight), so a starving
+# head is ~8px and a stuffed one ~17px, spilling slightly over its neighbours.
+START_WEIGHT = 0.3
+GAIN_PER_LEVEL = 0.035
+LOSS_PER_EMPTY = 0.12
+THIN, RANGE = 0.6, 0.65
 
 LEVELS = {"NONE": 0, "FIRST_QUARTILE": 1, "SECOND_QUARTILE": 2, "THIRD_QUARTILE": 3, "FOURTH_QUARTILE": 4}
 
@@ -74,6 +84,20 @@ def sweep(grid):
     return weeks, path
 
 
+def weights(grid, path):
+    """Snake weight (0..1) after the head reaches each step of the path."""
+    w, out, eaten = START_WEIGHT, [], set()
+    for pos in path:
+        level = grid.get(pos, 0)
+        if level and pos not in eaten:
+            w = min(1.0, w + GAIN_PER_LEVEL * level)
+            eaten.add(pos)
+        else:
+            w = max(0.0, w - LOSS_PER_EMPTY)
+        out.append(w)
+    return out
+
+
 def pct(ms, total):
     return f"{ms / total * 100:.3f}".rstrip("0").rstrip(".") + "%"
 
@@ -88,7 +112,7 @@ def render(grid, weeks, path, theme):
         f":root{{--ce:{theme['empty']};--cs:{theme['snake']};--cb:{theme['border']};"
         + "".join(f"--c{i + 1}:{c};" for i, c in enumerate(theme["levels"])) + "}",
         f".c{{fill:var(--ce);stroke:var(--cb);stroke-width:1px;animation:none {total}ms linear infinite}}",
-        f".s{{fill:var(--cs);animation:none {total}ms linear infinite}}",
+        f".s{{fill:var(--cs);transform-box:fill-box;transform-origin:center;animation:none {total}ms linear infinite}}",
         f".g{{animation:g {total}ms linear infinite}}",
         f"@keyframes g{{0%{{opacity:0}}{pct(400, total)},{pct(fade_start, total)}{{opacity:1}}"
         f"{pct(fade_start + 500, total)},100%{{opacity:0}}}}",
@@ -113,22 +137,24 @@ def render(grid, weeks, path, theme):
             f".{name}{{fill:var(--c{level});animation-name:{name}}}")
         rects.append(f'<rect class="c {name}" x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2"/>')
 
-    # Snake: segment i trails the head by i moves.
+    # Snake: segment i trails the head by i moves and keeps the weight the head had there.
+    weight = weights(grid, path)
     segs = []
-    for i, size in enumerate(SEGMENTS):
+    for i, taper in enumerate(SEGMENTS):
         frames = []
         last = None
         for t in range(moves + 1):
-            w, d = path[min(max(t - i, 0), len(path) - 1)]
-            here = (w * PITCH, d * PITCH)
-            if here != last:
-                frames.append(f"{pct(t * STEP_MS, total)}{{transform:translate({here[0]}px,{here[1]}px)}}")
-                last = here
-        frames.append(f"100%{{transform:translate({last[0]}px,{last[1]}px)}}")
+            k = min(max(t - i, 0), len(path) - 1)
+            w, d = path[k]
+            scale = round(taper * (THIN + RANGE * weight[k]), 3)
+            state = (w * PITCH, d * PITCH, scale)
+            if state != last:
+                frames.append(f"{pct(t * STEP_MS, total)}{{transform:translate({state[0]}px,{state[1]}px) scale({scale})}}")
+                last = state
+        frames.append(f"100%{{transform:translate({last[0]}px,{last[1]}px) scale({last[2]})}}")
         css.append(f"@keyframes s{i}{{{''.join(frames)}}}.s{i}{{animation-name:s{i}}}")
-        off = (PITCH - size) / 2
-        r = round(size * 0.32, 1)
-        segs.append(f'<rect class="s s{i}" x="{off:g}" y="{off:g}" width="{size}" height="{size}" rx="{r}"/>')
+        off = (PITCH - BASE) / 2
+        segs.append(f'<rect class="s s{i}" x="{off:g}" y="{off:g}" width="{BASE}" height="{BASE}" rx="4.5"/>')
 
     css.append("@media (prefers-reduced-motion: reduce){*{animation:none!important}.g{opacity:0}}")
     width, height = weeks * PITCH, 7 * PITCH
