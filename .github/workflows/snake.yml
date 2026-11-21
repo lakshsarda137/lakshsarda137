@@ -20,20 +20,11 @@ jobs:
       - name: Check out profile repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      # Custom generator: the snake sweeps the graph column by column and never leaves it.
       - name: Generate light and dark snake
-        uses: Platane/snk@d8f6715049803e982ee5ff501b6b9b7d5deeb09b # v3
-        with:
-          github_user_name: ${{ github.repository_owner }}
-          outputs: |
-            dist/snake.svg?palette=github-light&color_snake=%231f6feb
-            dist/snake-dark.svg?palette=github-dark&color_snake=%2358a6ff&color_dots=%232d333b,%230e5a2a,%231f883d,%233fb950,%237ee787
-
-      # Keep the snake on the grid, trim the empty margin, respect reduced motion.
-      - name: Post-process SVGs
-        shell: bash
-        run: |
-          sudo chown -R "$(id -u):$(id -g)" dist
-          python3 .github/scripts/snake_postprocess.py dist/*.svg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/snake.py --user "${{ github.repository_owner }}" --out dist
 
       # Publish to a separate "output" branch as a single commit, so main stays free of bot commits.
       - name: Publish to the output branch
