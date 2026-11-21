@@ -1,0 +1,48 @@
+name: Contribution snake
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # daily
+  workflow_dispatch:
+
+concurrency:
+  group: contribution-snake
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Generate light and dark snake
+        uses: Platane/snk@d8f6715049803e982ee5ff501b6b9b7d5deeb09b # v3
+        with:
+          github_user_name: ${{ github.repository_owner }}
+          outputs: |
+            dist/snake.svg?palette=github-light
+            dist/snake-dark.svg?palette=github-dark
+
+      - name: Stop the animation for visitors who prefer reduced motion
+        shell: bash
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" dist
+          for f in dist/*.svg; do
+            grep -q '</style>' "$f" || { echo "no <style> in $f"; exit 1; }
+            sed -i 's#</style>#@media (prefers-reduced-motion: reduce){*{animation:none!important}}</style>#' "$f"
+          done
+
+      # Publish to a separate "output" branch as a single commit, so main stays free of bot commits.
+      - name: Publish to the output branch
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git -C dist init -q -b output
+          git -C dist config user.name "github-actions[bot]"
+          git -C dist config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C dist add .
+          git -C dist commit -q -m "Update contribution snake"
+          git -C dist push -q --force "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" output
