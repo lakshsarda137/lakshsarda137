@@ -8,8 +8,8 @@ never leaves the grid, and it avoids running through its own body. It stops once
 ~90% is eaten, because chasing the last stragglers is a slow, starving tour. The
 route is seeded by the date, so it changes every day.
 
-Motion: it dashes over empty or already-eaten ground, moves slower while eating and
-pauses to chew dark squares. It gets fatter as it eats and slimmer as it crosses
+Motion: it moves at one steady speed (variable speed and chewing pauses read as
+lag). It gets fatter as it eats and slimmer as it crosses
 squares with nothing to eat; each body segment keeps the weight the head had at that
 spot, so meals travel down the body as a bulge.
 
@@ -33,9 +33,7 @@ PITCH = 16                 # px between squares, as on github.com
 CELL = 12                  # square size
 
 # Timing (ms)
-EAT_MS = 160               # move onto a square it eats
-DASH_MS = 85               # move over empty or already-eaten ground
-CHEW_MS = 320              # pause after eating a dark square (level 3-4)
+STEP_MS = 120              # one move, constant
 FADE_IN_MS = 400           # snake fades in at the start of the loop
 SHRINK_MS = 300            # snake shrinks away at the end
 WAVE_MS_PER_CELL = 22      # ripple speed (per square of distance)
@@ -176,20 +174,10 @@ def weights(grid, path):
     return out
 
 
-def timeline(grid, path, extra):
-    """Head arrival time at each path index (plus `extra` trailing dash moves so the
-    tail catches up), and how long the snake pauses there to chew."""
-    times, holds, eaten, t = [], [], set(), FADE_IN_MS
-    for i in range(len(path) + extra):
-        pos = path[min(i, len(path) - 1)]
-        level = grid.get(pos, 0)
-        fresh = i < len(path) and level and pos not in eaten
-        if i:
-            t += holds[-1] + (EAT_MS if fresh else DASH_MS)
-        eaten.add(pos)
-        times.append(t)
-        holds.append(CHEW_MS if fresh and level >= 3 else 0)
-    return times, holds
+def timeline(path, extra):
+    """Head arrival time at each path index, plus `extra` trailing moves so the tail
+    catches up with the head at the end."""
+    return [FADE_IN_MS + i * STEP_MS for i in range(len(path) + extra)]
 
 
 def pct(ms, total):
@@ -199,7 +187,7 @@ def pct(ms, total):
 # ----------------------------------------------------------------- render
 
 def render(grid, weeks, path, theme):
-    times, holds = timeline(grid, path, extra=len(SEGMENTS) - 1)
+    times = timeline(path, extra=0)   # shrink starts the moment the head stops; body slurps in
     end = times[-1]
     origin = path[-1]
     wave_start = end + SHRINK_MS // 2
@@ -267,8 +255,6 @@ def render(grid, weeks, path, theme):
             scale = round(taper * (THIN + RANGE * weight[k]), 3)
             frame = f"{{transform:translate({w * PITCH}px,{d * PITCH}px) scale({scale})}}"
             frames.append(f"{P(times[t])}{frame}")
-            if holds[t]:                      # whole snake pauses while the head chews
-                frames.append(f"{P(times[t] + holds[t])}{frame}")
         frames.insert(0, f"0%{frames[0][frames[0].index('{'):]}")
         frames.append(f"100%{frame}")
         css.append(f"@keyframes s{i}{{{''.join(frames)}}}.s{i}{{animation-name:s{i}}}")
