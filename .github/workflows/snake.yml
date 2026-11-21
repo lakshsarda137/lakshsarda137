@@ -17,22 +17,23 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out profile repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
       - name: Generate light and dark snake
         uses: Platane/snk@d8f6715049803e982ee5ff501b6b9b7d5deeb09b # v3
         with:
           github_user_name: ${{ github.repository_owner }}
           outputs: |
-            dist/snake.svg?palette=github-light
-            dist/snake-dark.svg?palette=github-dark
+            dist/snake.svg?palette=github-light&color_snake=%231f6feb
+            dist/snake-dark.svg?palette=github-dark&color_snake=%2358a6ff
 
-      - name: Stop the animation for visitors who prefer reduced motion
+      # Keep the snake on the grid, trim the empty margin, respect reduced motion.
+      - name: Post-process SVGs
         shell: bash
         run: |
           sudo chown -R "$(id -u):$(id -g)" dist
-          for f in dist/*.svg; do
-            grep -q '</style>' "$f" || { echo "no <style> in $f"; exit 1; }
-            sed -i 's#</style>#@media (prefers-reduced-motion: reduce){*{animation:none!important}}</style>#' "$f"
-          done
+          python3 .github/scripts/snake_postprocess.py dist/*.svg
 
       # Publish to a separate "output" branch as a single commit, so main stays free of bot commits.
       - name: Publish to the output branch
