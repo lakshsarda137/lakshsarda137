@@ -30,7 +30,7 @@ Table tennis, which I played at national level in India. Chess, cricket, and a l
 [LinkedIn](https://linkedin.com/in/lakshsarda). Email: lakshsarda137@gmail.com
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/lakshsarda137/lakshsarda137/output/snake-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/lakshsarda137/lakshsarda137/output/snake.svg">
-  <img alt="A snake eating my GitHub contribution graph" src="https://raw.githubusercontent.com/lakshsarda137/lakshsarda137/output/snake.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/lakshsarda137/lakshsarda137/output/snake-dark.svg?v=2">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/lakshsarda137/lakshsarda137/output/snake.svg?v=2">
+  <img alt="A snake eating my GitHub contribution graph" src="https://raw.githubusercontent.com/lakshsarda137/lakshsarda137/output/snake.svg?v=2">
 </picture>
