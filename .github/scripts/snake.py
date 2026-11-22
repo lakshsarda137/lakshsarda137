@@ -1,12 +1,11 @@
 """Draw a snake that eats the GitHub contribution graph, without leaving it.
 
-Route: the snake starts on a random green square and hunts. Usually it heads for the
-nearest uneaten square (on a tie, squares about to be cut off first, then darker
-ones); sometimes it is distracted by a juicier square nearby; now and then it lunges
-across the board for a dark square. It only moves between neighbouring days, so it
-never leaves the grid, and it avoids running through its own body. It stops once
-~90% is eaten, because chasing the last stragglers is a slow, starving tour. The
-route is seeded by the date, so it changes every day.
+Route: the snake eats every green square. Each day (seeded by the date) it tries a
+few random starting squares; for each it plans the order to eat things in (nearest
+first, rescuing squares about to be cut off) and then tidies that order so nothing is
+left behind for a long trip later. It keeps the plan with the least walking over
+empty squares, skipping plans that eat the board in a left-to-right wave. It only
+moves between neighbouring days, prefers paths over food, and avoids its own body.
 
 Motion: it moves at one steady speed (variable speed and chewing pauses read as
 lag). It gets fatter as it eats and slimmer as it crosses
@@ -52,13 +51,9 @@ GAIN_PER_LEVEL = 0.035
 LOSS_PER_EMPTY = 0.09
 THIN, RANGE = 0.6, 0.65
 
-# Hunting. Measured on a dense graph, lunges cut how much the eating looks like a
-# left-to-right wave from 0.55 to 0.25 (rank correlation of eat order vs week).
-DISTRACT_CHANCE = 0.2      # chase a juicier square within DISTRACT_RADIUS of the nearest
-DISTRACT_RADIUS = 3
-LUNGE_CHANCE = 0.08        # lunge for a dark square at least LUNGE_MIN_DIST away
-LUNGE_MIN_DIST = 8
-EAT_FRACTION = 0.9
+# Route
+CANDIDATES = 8             # random starts tried per day; the tidiest plan wins
+MAX_WAVE = 0.65            # reject plans whose eat order tracks the week this closely
 
 LEVELS = {"NONE": 0, "FIRST_QUARTILE": 1, "SECOND_QUARTILE": 2, "THIRD_QUARTILE": 3, "FOURTH_QUARTILE": 4}
 
@@ -101,61 +96,126 @@ def adjacent(pos):
     return ((w + 1, d), (w - 1, d), (w, d + 1), (w, d - 1))
 
 
-def bfs(start, cells, blocked, rng):
-    """Shortest-path tree from start over real days, avoiding blocked squares."""
-    prev, dist, queue = {start: None}, {start: 0}, deque([start])
+def manhattan(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def plan_order(start, food, rng):
+    """Order to eat squares in: nearest next; on a tie, squares about to be cut off."""
+    left, order = set(food) - {start}, [start]
+    while left:
+        head = order[-1]
+        nearest = min(manhattan(head, f) for f in left)
+        pool = [f for f in left if manhattan(head, f) == nearest]
+        lonely = {f: sum(n in left for n in adjacent(f)) for f in pool}
+        least = min(lonely.values())
+        nxt = rng.choice(sorted(f for f in pool if lonely[f] == least))
+        order.append(nxt)
+        left.discard(nxt)
+    return order
+
+
+def tidy(order, longest=3):
+    """Or-opt: move runs of up to `longest` squares to wherever they make the whole
+    route shorter. This is what stops squares being left behind for a long trip later."""
+    def gain_spot(o, i, j):
+        a, b = o[i - 1], o[j] if j < len(o) else None
+        cost = manhattan(a, o[i]) + (manhattan(o[j - 1], b) - manhattan(a, b) if b else 0)
+        rest = o[:i] + o[j:]
+        for k in range(len(rest)):
+            p, q = rest[k], rest[k + 1] if k + 1 < len(rest) else None
+            for seg in (o[i:j], o[i:j][::-1]):
+                add = manhattan(p, seg[0]) + (manhattan(seg[-1], q) - manhattan(p, q) if q else 0)
+                if add < cost:
+                    return rest[:k + 1] + seg + rest[k + 1:]
+        return None
+
+    improved = True
+    while improved:
+        improved = False
+        for size in range(1, longest + 1):
+            for i in range(1, len(order) - size + 1):
+                better = gain_spot(order, i, i + size)
+                if better:
+                    order, improved = better, True
+                    break
+            if improved:
+                break
+    return order
+
+
+def distances_to(target, cells, blocked):
+    dist, queue = {target: 0}, deque([target])
     while queue:
         cur = queue.popleft()
-        options = [n for n in adjacent(cur) if n in cells]
-        rng.shuffle(options)                  # organic tie-breaking
-        for n in options:
-            if n not in prev and n not in blocked:
-                prev[n], dist[n] = cur, dist[cur] + 1
+        for n in adjacent(cur):
+            if n in cells and n not in dist and n not in blocked:
+                dist[n] = dist[cur] + 1
                 queue.append(n)
-    return prev, dist
+    return dist
+
+
+def walk(grid, order, rng):
+    """Follow the plan square by square: shortest way to the next uneaten target,
+    preferring steps onto food, not through its own body."""
+    cells = set(grid)
+    food = {pos for pos, level in grid.items() if level}
+    path = [order[0]]
+    food.discard(order[0])
+    for target in order[1:]:
+        if target not in food:
+            continue                          # already eaten on the way
+        dist = distances_to(target, cells, set(path[-len(SEGMENTS):-1]) - {target})
+        if path[-1] not in dist:              # boxed in by own body: allow crossing it
+            dist = distances_to(target, cells, set())
+        while path[-1] != target:
+            here = path[-1]
+            steps = [n for n in adjacent(here) if dist.get(n) == dist[here] - 1]
+            rng.shuffle(steps)
+            nxt = max(steps, key=lambda n: grid[n] if n in food else -1)
+            path.append(nxt)
+            food.discard(nxt)
+    return path
+
+
+def score(grid, path):
+    """(looks like a wave, empty steps + 3 * longest empty stretch): lower is better."""
+    eaten, empty, stretch, longest = {}, 0, 0, 0
+    for t, pos in enumerate(path):
+        if grid.get(pos) and pos not in eaten:
+            eaten[pos], stretch = t, 0
+        else:
+            empty, stretch = empty + 1, stretch + 1
+            longest = max(longest, stretch)
+    return (abs(spearman(list(eaten.values()), [w for w, _ in eaten])) > MAX_WAVE,
+            empty + 3 * longest)
+
+
+def spearman(xs, ys):
+    def ranks(v):
+        r = [0] * len(v)
+        for k, i in enumerate(sorted(range(len(v)), key=lambda i: v[i])):
+            r[i] = k
+        return r
+    n = len(xs)
+    if n < 3:
+        return 0.0
+    return 1 - 6 * sum((a - b) ** 2 for a, b in zip(ranks(xs), ranks(ys))) / (n * (n * n - 1))
 
 
 def hunt(grid, seed):
-    """Route over neighbouring days that eats ~EAT_FRACTION of the green squares."""
-    rng = random.Random(seed)
-    cells = set(grid)
-    food = {pos for pos, level in grid.items() if level}
+    """Route over neighbouring days that eats every green square."""
+    food = sorted(pos for pos, level in grid.items() if level)
     if not food:
-        return [min(cells)]
-    leave = len(food) - round(len(food) * EAT_FRACTION)
-    path = [rng.choice(sorted(food))]
-    food.discard(path[0])
-
-    def appeal(f):
-        # Few uneaten neighbours (about to be stranded) first, then darker.
-        return (-sum(n in food for n in adjacent(f)), grid[f])
-
-    while len(food) > leave:
-        head = path[-1]
-        prev, dist = bfs(head, cells, set(path[-len(SEGMENTS):-1]), rng)
-        reachable = [f for f in food if f in dist]
-        if not reachable:                     # boxed in by own body: allow crossing it
-            prev, dist = bfs(head, cells, set(), rng)
-            reachable = [f for f in food if f in dist]
-
-        nearest = min(dist[f] for f in reachable)
-        if rng.random() < LUNGE_CHANCE:
-            far = [f for f in reachable if dist[f] >= LUNGE_MIN_DIST] or reachable
-            target = rng.choices(far, weights=[grid[f] ** 2 for f in far])[0]
-        else:
-            reach = DISTRACT_RADIUS if rng.random() < DISTRACT_CHANCE else 0
-            pool = [f for f in reachable if dist[f] <= nearest + reach]
-            best = max(appeal(f) for f in pool)
-            target = rng.choice([f for f in pool if appeal(f) == best])
-
-        steps = []
-        while target != head:
-            steps.append(target)
-            target = prev[target]
-        for pos in reversed(steps):
-            path.append(pos)
-            food.discard(pos)
-    return path
+        return [min(grid)]
+    best = None
+    for k in range(CANDIDATES):
+        rng = random.Random(f"{seed}/{k}")
+        path = walk(grid, tidy(plan_order(rng.choice(food), food, rng)), rng)
+        s = score(grid, path)
+        if best is None or s < best[0]:
+            best = (s, path)
+    return best[1]
 
 
 # ----------------------------------------------------------------- timing
@@ -235,7 +295,7 @@ def render(grid, weeks, path, theme):
                 f"{P(r + POP_MS)},100%{{fill:var(--c{level});transform:scale(1)}}}}")
             base = f"fill:var(--c{level});"
         else:
-            # Empty squares and uneaten stragglers just bounce as the ripple passes.
+            # Empty squares just bounce as the ripple passes.
             css.append(
                 f"@keyframes {name}{{0%,{P(r)}{{transform:scale(1)}}"
                 f"{P(r + POP_MS * .4)}{{transform:scale(1.22)}}{P(r + POP_MS)},100%{{transform:scale(1)}}}}")
@@ -283,7 +343,8 @@ def main():
     weeks = max(w for w, _ in grid) + 1
     path = hunt(grid, seed=args.seed or datetime.date.today().isoformat())
     assert all(pos in grid for pos in path), "path left the board"
-    assert all(abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1 for a, b in zip(path, path[1:])), "path jumped"
+    assert all(manhattan(a, b) == 1 for a, b in zip(path, path[1:])), "path jumped"
+    assert {p for p, level in grid.items() if level} <= set(path), "left squares uneaten"
 
     os.makedirs(args.out, exist_ok=True)
     for name, theme in THEMES.items():
